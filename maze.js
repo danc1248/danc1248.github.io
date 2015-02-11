@@ -91,6 +91,14 @@ function draw(m) {
   return coord;
 }
 
+function massScale(lines, x, y){
+  for(var a=0; a<lines.length; a++){
+    lines[a].c1 = lines[a].c1.scale(x, y);
+    lines[a].c2 = lines[a].c2.scale(x, y);
+  }
+  return lines;
+}
+
 function drawLine() {
   // this is a straight line, in case you want to visualize rotation
   var coords = [
@@ -126,9 +134,9 @@ Coord.prototype.translate = function(c, neg){
   var c = new Coord(x2, y2);
   return c;
 }
-Coord.prototype.scale = function(s){
-  var x2 = this.x * s;
-  var y2 = this.y * s;
+Coord.prototype.scale = function(x, y){
+  var x2 = this.x * x;
+  var y2 = this.y * y;
   var c = new Coord(x2, y2);
   return c;
 }
@@ -153,53 +161,40 @@ makeLine = function(x1, y1, x2, y2){
   return l;
 }
 
-// double in distance for ever quarter turn, golden spiral:
-var Golden = function(X, Y, quarterTurns){
-  this.center = new Coord(X / 2, Y / 2);
-  this.phi = (1 + Math.sqrt(5)) / 2; // wikipedia
-  this.quarterTurns = quarterTurns;
-  this.rotation = (Math.PI / 2) * this.quarterTurns;
-  this.scalar = Math.pow(this.phi, this.quarterTurns);
-};
-// this doens't work
-Golden.prototype.doTheThing = function(c0){
-  var c = c0.rotate(this.center, this.rotation);
-  var x2 = c.x, y2 = c.y;
-
-  x2 *= this.scalar;
-  y2 *= this.scalar;
-
-  c0.x = x2;
-  c0.y = y2;
-}
-
 // start index on the 1, but we have 0 to prevent undefiend when doing index-1 or whatever
 var fib = [0,1,1,2,3,5,8,13,21,34,55,89];
 var START = 1;
 var FIN = fib.length;
 
 // try to follow a Fibonacci spiral, hmm
-var Fibonacci = function(X, Y, index, fib0){
+var Fibonacci = function(index, fib0){
   this.rotation = -Math.PI / 2 * (index - START); // rotate around in a spiral, these are negative for some reason
-  this.center = new Coord(X / 2, Y / 2); // used for rotation the maze around this coord
-  this.scalar = fib[index]; // gets larger as sequence progresses
+  this.width = fib[index]; // gets larger as sequence progresses, regardless of nodes
+  this.height = fib[index];
+  this.center = new Coord(0.5, 0.5); // used for rotation the maze around this coord, this happens before it is scaled to fit, which is why it uses X,Y instead of width
 
   // mazes enter in top left, exit in lower right
   // keep track so we can translate mazes around to fit
   var enter = new Coord(0, 0);
-  this.doTheThing(enter); // called before previous is known
+  this.exit = new Coord(1, 1);
   this.diff = null;
+  
+  this.doTheThing(enter); // called before diff is known
+
+  // match our entrance with the previous exit
   if(fib0){
     var actual = fib0.exit;
     this.diff = new Coord(actual.x - enter.x, actual.y - enter.y);
   }
-  this.exit = new Coord(X, Y);
-  this.doTheThing(this.exit);
+
+  this.doTheThing(this.exit); // called after diff is known, this is the real exit, will be used by next fib
+  
 };
 
 Fibonacci.prototype.doTheThing = function(c0){
   var c = c0.rotate(this.center, this.rotation); // rotate before you translate, otherwise center will be wrong
-  c = c.scale(this.scalar);
+  c = c.scale(this.width, this.height); // scale to fit
+  
   // match your enter with previous exit, if it exists
   if(this.diff){
     c = c.translate(this.diff);
@@ -212,43 +207,46 @@ Fibonacci.prototype.doTheThing = function(c0){
 
 
 function go(id){
-  var SCALE = 4;
-  var X = 4, Y = 4;
-  var EXTRA = 300; // this is just for stuffing in some extra space, its not very math
+  var SCALE = 10;
+  var EXTRA = 300; // just to make it not in the top left of the CANVAS, this exactly science
 
   var cont = document.getElementById(id);
   var CANVAS = document.createElement("canvas");
-  CANVAS.width=SCALE * X + EXTRA * 2;
-  CANVAS.height=SCALE * Y + EXTRA * 2;
+  CANVAS.width=1000;
+  CANVAS.height=1000;
   cont.appendChild(CANVAS);
 
   // draws line segmens from an array of coordinates onto
   // the canvas, which is global
-  function render(coords){
+  function render(lines){
     var ctx = CANVAS.getContext("2d");
-    for(var a=0; a<coords.length; a++){
-      var coord = coords[a];
+    for(var a=0; a<lines.length; a++){
+      var line = lines[a];
       ctx.beginPath();
-      ctx.moveTo(coord.c1.x*SCALE + EXTRA, coord.c1.y*SCALE + EXTRA);
-      ctx.lineTo(coord.c2.x*SCALE + EXTRA, coord.c2.y*SCALE + EXTRA);
+      ctx.moveTo(line.c1.x*SCALE + EXTRA, line.c1.y*SCALE + EXTRA);
+      ctx.lineTo(line.c2.x*SCALE + EXTRA, line.c2.y*SCALE + EXTRA);
       ctx.stroke();
     }
   }
 
   var dobat0, dobat1; // keep track of previous thing, for moving into place
-  for(var a=START; a<FIN; a++){
-    dobat1 = new Fibonacci(X, Y, a, dobat0);
+  var x0 = 2, y0 = 2; // number of nodes in initial maze
+  for(var index=START; index<FIN; index++){
+    var fibon = fib[index];
+    // var X = x0, Y = y0; // constant number of nodes, maze grows as it rotates
+    // var X = fibon * x0, Y = fibon * y0; // number of nodes increases at same rate as maze, to keep the "size" of the maze constant
+    var X = Math.round(Math.sqrt(fibon * x0)), Y = Math.round(Math.sqrt(fibon * y0)); // number of nodes increases at a slower rate then maze
+    dobat1 = new Fibonacci(index, dobat0);
     console.log(dobat1);
     var m = maze(X, Y);
-    console.log(m);
-    var coords = draw(m);
+    var lines = draw(m);
+    lines = massScale(lines, 1/X, 1/Y); // maze will have width of X, to simplify math, we ignore all nodes and cram it into a 1x1 square
 
-    coords.map(function(coord){
-      dobat1.doTheThing(coord.c1);
-      dobat1.doTheThing(coord.c2);
+    lines.map(function(line){
+      dobat1.doTheThing(line.c1);
+      dobat1.doTheThing(line.c2);
     });
-    console.log(coords);
-    render(coords);
+    render(lines);
 
     dobat0 = dobat1;
   }
